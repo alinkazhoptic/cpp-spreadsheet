@@ -72,7 +72,7 @@ public:
     virtual ~Expr() = default;
     virtual void Print(std::ostream& out) const = 0;
     virtual void DoPrintFormula(std::ostream& out, ExprPrecedence precedence) const = 0;
-    virtual double Evaluate(/*добавьте сюда нужные аргументы*/ args) const = 0;
+    virtual double Evaluate(const SheetInterface& sheet) const = 0;
 
     // higher is tighter
     virtual ExprPrecedence GetPrecedence() const = 0;
@@ -95,6 +95,7 @@ public:
 };
 
 namespace {
+
 class BinaryOpExpr final : public Expr {
 public:
     enum Type : char {
@@ -142,8 +143,53 @@ public:
         }
     }
 
-    double Evaluate(/*добавьте нужные аргументы*/) const override {
-			// Скопируйте ваше решение из предыдущих уроков.
+// Реализуйте метод Evaluate() для бинарных операций.
+// При делении на 0 выбрасывайте ошибку вычисления FormulaError
+    double Evaluate(const SheetInterface& sheet) const override {
+        double res;
+        double left;
+        double right;
+
+        left = lhs_->Evaluate(sheet);  // м.б. исключения
+        right = rhs_->Evaluate(sheet);  // м.б. исключения
+        
+        // сюда пришли если левый и правый опреанды вычислены правильно
+        switch (type_) {
+            case Add:
+                if (!std::isfinite( res = left + right )) {
+                    throw FormulaError(FormulaError::Category::Arithmetic);
+                }
+                break;
+            
+            case Subtract:
+                if (!std::isfinite( res = left - right )) {
+                    throw FormulaError(FormulaError::Category::Arithmetic);
+                }
+                break;
+            
+            case Multiply:
+                if (!std::isfinite( res = left * right )) {
+                    throw FormulaError(FormulaError::Category::Arithmetic);
+                }
+                break;
+
+            case Divide: {
+                double divider = right;
+                if (divider == 0) {
+                    throw FormulaError(FormulaError::Category::Arithmetic);
+                }
+                if (! std::isfinite(res = lhs_->Evaluate(sheet) / divider)) {
+                    throw FormulaError(FormulaError::Category::Arithmetic);
+                }
+                break;
+            }
+            default:
+                // have to do this because VC++ has a buggy warning
+                assert(false);
+                break;
+        }
+
+        return res;
     }
 
 private:
@@ -151,6 +197,7 @@ private:
     std::unique_ptr<Expr> lhs_;
     std::unique_ptr<Expr> rhs_;
 };
+
 
 class UnaryOpExpr final : public Expr {
 public:
@@ -180,8 +227,21 @@ public:
         return EP_UNARY;
     }
 
-    double Evaluate(/*добавьте нужные аргументы*/ args) const override {
-        // Скопируйте ваше решение из предыдущих уроков.
+// Реализуйте метод Evaluate() для унарных операций.
+    double Evaluate(const SheetInterface& sheet) const override {
+        double res = 0;
+        switch (type_) {
+            case UnaryPlus:
+                res = operand_->Evaluate(sheet);
+                break;
+            case UnaryMinus:
+                res = (-1)*operand_->Evaluate(sheet);
+                break;
+            default:
+                assert(false);
+                break;
+        }
+        return res;
     }
 
 private:
@@ -189,17 +249,18 @@ private:
     std::unique_ptr<Expr> operand_;
 };
 
+
 class CellExpr final : public Expr {
 public:
     explicit CellExpr(const Position* cell)
-        : cell_(cell) {
+        : cell_pos_(cell) {
     }
 
     void Print(std::ostream& out) const override {
-        if (!cell_->IsValid()) {
+        if (!cell_pos_->IsValid()) {
             out << FormulaError::Category::Ref;
         } else {
-            out << cell_->ToString();
+            out << cell_pos_->ToString();
         }
     }
 
@@ -211,13 +272,66 @@ public:
         return EP_ATOM;
     }
 
-    double Evaluate(/*добавьте нужные аргументы*/ args) const override {
-        // реализуйте метод.
+
+    // Получить значение ячейки на позиции cell_. 
+    // Вернет double, если в ячейке число или текст, который может быть 
+    // преобразован в число (пустая ячека -> 0). В противном случае выбрасывает исключения: 
+    // - FormulaError::Category::Ref - позиция ячейки не помещается в таблицу
+    // - FormulaError::Category::Value - в ячейке текст, который не может быть преобразован в число 
+    double Evaluate(const SheetInterface& sheet) const override {
+        // проверяем, что позиция ячейки не выходит за границы таблицы
+        if (!cell_pos_->IsValid()) {
+            throw FormulaError(FormulaError::Category::Ref);
+        }
+
+        double res = 0;
+        CellInterface::Value val;
+
+        // получаем указатель на ячейку, если его нет, pyfxbn? tcxtqrb ytn => 0:
+        const CellInterface* cell_interf = sheet.GetCell(*cell_pos_);
+        if (cell_interf == nullptr) {
+            return 0;
+        }
+        
+        // тут может выскочить исключение FormulaError любой категории и оно пробросится дальше
+        val = cell_interf->GetValue();
+        
+        // Если исключение не выбросилось, значит строка или число
+        if (std::holds_alternative<std::string>(val)) {
+
+            std::string str_val = std::get<std::string>(val);
+            if (str_val.empty()) {
+                return 0;
+            }
+            // Попытка вытащить число из строки
+            std::size_t num_of_converted_char = 0;
+            try {
+                res = std::stod(str_val, &num_of_converted_char);  // исключение invalid_argument если не удалось преобразовать строку в число
+            } catch(const std::invalid_argument& err) {
+                throw FormulaError(FormulaError::Category::Value);
+            }
+
+            // проверка правильной конвертации (должны быть сконвертированы все символы => p будет равно размеру строки)
+            if (num_of_converted_char < str_val.size() && num_of_converted_char > 0) {
+                throw FormulaError(FormulaError::Category::Value);
+            }
+            
+        } 
+        else if (std::holds_alternative<double>(val)) {
+            res = std::get<double>(val);
+        } 
+        else if (std::holds_alternative<FormulaError>(val)) {
+            FormulaError fe = std::get<FormulaError>(val);
+            throw FormulaError(fe.GetCategory());
+        }
+
+        return res;
     }
 
 private:
-    const Position* cell_;
+    const Position* cell_pos_;
 };
+
 
 class NumberExpr final : public Expr {
 public:
@@ -237,13 +351,15 @@ public:
         return EP_ATOM;
     }
 
-    double Evaluate(/*добавьте нужные аргументы*/ args) const override {
+    // Для чисел метод возвращает значение числа.
+    double Evaluate(const SheetInterface&) const override {
         return value_;
     }
 
 private:
     double value_;
 };
+
 
 class ParseASTListener final : public FormulaBaseListener {
 public:
@@ -335,6 +451,7 @@ private:
     std::forward_list<Position> cells_;
 };
 
+
 class BailErrorListener : public antlr4::BaseErrorListener {
 public:
     void syntaxError(antlr4::Recognizer* /* recognizer */, antlr4::Token* /* offendingSymbol */,
@@ -347,6 +464,7 @@ public:
 
 }  // namespace
 }  // namespace ASTImpl
+
 
 FormulaAST ParseFormulaAST(std::istream& in) {
     using namespace antlr4;
@@ -372,10 +490,12 @@ FormulaAST ParseFormulaAST(std::istream& in) {
     return FormulaAST(listener.MoveRoot(), listener.MoveCells());
 }
 
+
 FormulaAST ParseFormulaAST(const std::string& in_str) {
     std::istringstream in(in_str);
     return ParseFormulaAST(in);
 }
+
 
 void FormulaAST::PrintCells(std::ostream& out) const {
     for (auto cell : cells_) {
@@ -383,17 +503,28 @@ void FormulaAST::PrintCells(std::ostream& out) const {
     }
 }
 
+
 void FormulaAST::Print(std::ostream& out) const {
     root_expr_->Print(out);
 }
+
 
 void FormulaAST::PrintFormula(std::ostream& out) const {
     root_expr_->PrintFormula(out, ASTImpl::EP_ATOM);
 }
 
-double FormulaAST::Execute(/*добавьте нужные аргументы*/ args) const {
-    return root_expr_->Evaluate(/*добавьте нужные аргументы*/ args);
+// Может выбросить исключения:
+/*
+- FormulaError::Category::Ref - позиция ячейки не помещается в таблицу
+- FormulaError::Category::Value -в ячейке текст, который не может быть преобразован в число 
+- FormulaError::Category::Arithmetic
+*/
+double FormulaAST::Execute(const SheetInterface& sheet) const {
+    // double res;
+    // res = root_expr_->Evaluate(sheet);  // может выскочить исключение FormulaError
+    return root_expr_->Evaluate(sheet);  // может выскочить исключение FormulaError;
 }
+
 
 FormulaAST::FormulaAST(std::unique_ptr<ASTImpl::Expr> root_expr, std::forward_list<Position> cells)
     : root_expr_(std::move(root_expr))

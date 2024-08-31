@@ -39,28 +39,38 @@ public:
     enum class Category {
         Ref,    // ссылка на ячейку с некорректной позицией
         Value,  // ячейка не может быть трактована как число
-        Div0,  // в результате вычисления возникло деление на ноль
+        Arithmetic,  // некорректная арифметическая операция
     };
 
-    FormulaError(Category category);
+    FormulaError(Category category)
+    : category_(category) {}
 
-    Category GetCategory() const;
+    Category GetCategory() const {
+        return category_;
+    }
 
-    bool operator==(FormulaError rhs) const;
+    bool operator==(FormulaError rhs) const {
+        return this->category_ == rhs.GetCategory();
+    }
 
-    std::string_view ToString() const;
+    std::string_view ToString() const {
+        switch (category_) {
+            case FormulaError::Category::Arithmetic:
+                return "#ARITHM!";
+            case FormulaError::Category::Ref:
+                return "#REF!";
+            case FormulaError::Category::Value:
+                return "#VALUE!";
+        }
+
+        return "#UNKNOWN!";
+    }
 
 private:
     Category category_;
 };
 
 std::ostream& operator<<(std::ostream& output, FormulaError fe);
-
-// Исключение, выбрасываемое при попытке передать в метод некорректную позицию
-class InvalidPositionException : public std::out_of_range {
-public:
-    using std::out_of_range::out_of_range;
-};
 
 // Исключение, выбрасываемое при попытке задать синтаксически некорректную
 // формулу
@@ -69,12 +79,31 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Исключение, выбрасываемое при попытке передать в метод некорректную позицию
+class InvalidPositionException : public std::out_of_range {
+public:
+    using std::out_of_range::out_of_range;
+};
+
+
 // Исключение, выбрасываемое при попытке задать формулу, которая приводит к
 // циклической зависимости между ячейками
 class CircularDependencyException : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
+
+/* 
+// Исключение, выбрасываемое, если вставка строк/столбцов в таблицу приведёт к
+// ячейке с позицией больше максимально допустимой
+class TableTooBigException : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+ */
+
+inline constexpr char FORMULA_SIGN = '=';
+inline constexpr char ESCAPE_SIGN = '\'';
 
 class CellInterface {
 public:
@@ -88,6 +117,7 @@ public:
     // В случае текстовой ячейки это её текст (без экранирующих символов). В
     // случае формулы - числовое значение формулы или сообщение об ошибке.
     virtual Value GetValue() const = 0;
+    
     // Возвращает внутренний текст ячейки, как если бы мы начали её
     // редактирование. В случае текстовой ячейки это её текст (возможно,
     // содержащий экранирующие символы). В случае формулы - её выражение.
@@ -98,9 +128,6 @@ public:
     // ячеек. В случае текстовой ячейки список пуст.
     virtual std::vector<Position> GetReferencedCells() const = 0;
 };
-
-inline constexpr char FORMULA_SIGN = '=';
-inline constexpr char ESCAPE_SIGN = '\'';
 
 // Интерфейс таблицы
 class SheetInterface {
