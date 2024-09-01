@@ -43,11 +43,11 @@ public:
     } 
 
     Value GetValue(const SheetInterface& /* sheet is not used */) const override {
-        return "";
+        return std::string();
     }
 
     std::string GetText() const override {
-        return "";
+        return std::string();
     }
 
     virtual bool IsFormulaInCell() const override {
@@ -234,7 +234,15 @@ void Cell::Set(std::string text) {
     else if (text.size() > 1 && text.at(0) == FORMULA_SIGN) {
         new_impl = std::make_unique<FormulaImpl>();
         // записываем формулу без =
-        new_impl->Set(text.substr(1, text.size() - 1));   
+        new_impl->Set(text.substr(1, text.size() - 1));
+
+        // проверяем на циклические зависимости:
+        for (const Position& pos : new_impl->GetReferencedCells()) {
+            const Cell* cell_to_find = sheet_.GetConcreteCell(pos);
+            if (CheckExistingDependenciesOnThisCell(cell_to_find) || (cell_to_find == this)) {
+                throw CircularDependencyException("Found circular dependency");
+            }
+        }
     }
     // Случай 3 - текст (в том числе текст с формулой если он начинается на ')
     else {
@@ -242,20 +250,24 @@ void Cell::Set(std::string text) {
         new_impl->Set(text);
     }
 
-    
+    // Так как содержимое изменилось - надо очистить кэш в зависимых ячейках
+    ClearCacheOfDependentCells();
+    // Удаляем связи с данной ячейкой в ячейках, на которые ранее она ссылалась
+    DeleteConnections();
     // очищаем информацию о содержащихся ссылках
     cells_contained_in_this_.clear();
-
     // записываем новые данные в ячейку
     impl_ = std::move(new_impl);
 
-    // добавляем связи с данной ячейкой (при необходимости создаются новые ячейки)
-    sheet_.AddConnections(this /*связь на данную ячейку*/, impl_->GetReferencedCells());
+    // обновляем граф: добавляем связи с данной ячейкой (при необходимости создаются новые ячейки)
+    AddConnections();
+
+    // сбрасываем кэш
+    ClearCache();
     
-    // после обновления графа - уверены, что все ячейки, 
+    // после обновления графа уверены, что все ячейки, 
     // на которые ссылается данная, существуют, можно их добавить в словарь 
-    SetCellsContainedInThis(impl_->GetReferencedCells());
-    
+    SetCellsContainedInThis(GetReferencedCells());
 }
 
 // Cовсем удаляет содержимое ячейки, 
@@ -265,9 +277,7 @@ void Cell::DeleteCell() {
 
 // Превращает ячейку в пустую
 void Cell::ClearContent() {
-    impl_.reset();
-    EmptyImpl* new_impl = new EmptyImpl();
-    impl_.reset(new_impl);
+    impl_.reset(new EmptyImpl());
 }
 
 
@@ -275,7 +285,7 @@ CellInterface::Value Cell::GetValue() const {
     CellInterface::Value res;
     // для формул вычисляем кеш при необходимости
     if (IsFormulaInCell()) {
-        if (!HasCash()) {
+        if (!HasCache()) {
             cache_ = impl_->GetValue(sheet_);  // исключения тоже записываются в кеш
         } 
         res = cache_.value();
@@ -369,9 +379,9 @@ bool Cell::IsEmptyCell() const {
 
 
 /* Проверяет, есть ли среди всех зависимостей от данной ячейки, 
-ячейка с координатами pos. Необходим для обнаружения циклических зависимостей.
-Если в данную ячейку пытаемся записать ячейку с позицией Y, 
-то надо вызвать CheckExistingDependenciesOnThisCell(Y) => true - есть зависимость => цикличность
+ячейка с адресом cell_to_find. Необходим для обнаружения циклических зависимостей.
+Если в ДАННУЮ ячейку пытаемся записать ячейку cell_to_find, 
+то надо вызвать CheckExistingDependenciesOnThisCell(cell_to_find) => true - есть зависимость => цикличность
 */
 bool Cell::CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const {
 
@@ -423,10 +433,88 @@ std::vector<Position> Cell::GetReferencedCells() const {
 }
 
 
-bool Cell::HasCash() const {
+bool Cell::HasCache() const {
     return (cache_.has_value());
 }
 
-void Cell::ClearCash() {
+void Cell::ClearCache() {
     cache_.reset();
 }
+
+// Очистить кэш у ячеек, зависящих от ДАННОЙ ячейки 
+// Необходимо вызвать после валидного изменения 
+void Cell::ClearCacheOfDependentCells() {
+
+    // Случай 1 - зависимый ячеек нет
+    if (cells_referencing_to_this_.empty()) {
+        return;
+    }
+
+    // Случай 2 - зависимые есть - обход графа в ширину
+    std::queue<Cell*> cells_to_visit;
+    
+    // Добавляем ячейки в очередь просмотра
+    for (Cell* cell : cells_referencing_to_this_) {
+        cells_to_visit.push(cell);
+    }
+    
+    while (!cells_to_visit.empty()) {
+        // берем первую (очередную) ячейку из очереди
+        Cell* cell_cur = cells_to_visit.front();
+
+        // Очищаем кэш только у ячеек, где он есть
+        if (cell_cur->HasCache()) {
+            // очищаем кеш
+            cell_cur->ClearCache();
+
+            // Добавляем в очередь ячейки, которые ссылаются на cell_cur
+            for (Cell* cell_dependent_on_cur : cell_cur->GetCellsReferencingToThis()) {
+                cells_to_visit.push(cell_dependent_on_cur);
+            }
+        }
+
+        // удаляем обработанную ячейку!!
+        cells_to_visit.pop();
+    }
+    
+    return;
+}
+
+void Cell::DeleteConnections() {
+     // Случай 1 - ссылок нет
+    if (cells_contained_in_this_.empty()) {
+        return;
+    }
+
+    // Случай 2 - ссылки есть 
+    // => получаем ячейки на указанных позициях и удаляем их связи с cell_changed
+    for (Cell* cell_tmp : cells_contained_in_this_) {
+        cell_tmp->DeleteReferenceToThis(this /* удаляем указатель на данную ячейку из данных cell_tmp */);
+    }
+}
+
+// Обновляет граф при изменении заданной ячейки pos
+void Cell::AddConnections() {
+    std::vector<Position> ref_list = GetReferencedCells();
+
+    // Случай 1 - ссылок нет => в таблице ничего изменять не надо
+    if (ref_list.empty()) {
+        return;
+    }
+
+    // Случай 2 - ссылки есть 
+    // => получаем/создаем ячейки на указанных позициях и добавляем каждой связь с текущей
+    for (const Position& pos : ref_list) {
+        Cell* cell_tmp = sheet_.GetConcreteCell(pos);
+
+        // если ячейки нет, то создаем новую пустую ячейку
+        if (!cell_tmp) {
+            cell_tmp = sheet_.AddNewEmptyCell(pos);
+        }
+
+        // для существующих ячеек добавляем связь с данной
+        cell_tmp->AddNewCellReferencedToThis(this);
+    }
+
+    return;
+} 

@@ -87,40 +87,16 @@ void Sheet::SetCell(Position pos, std::string text) {
             return;
         }
 
-        // создаем новую ячейку, по которой проверим наличие циклических зависимостей
-        auto new_cell = std::make_unique<Cell>(*this);
-        new_cell->Set(text);
+        // временно сохраняем ячейки, которые были связаны с изменяемой
+        std::vector<Position> old_referenced_cells = cell->GetReferencedCells();
 
-        // Для формульной ячейки надо проверить на циклические зависимости
-        if (new_cell->IsFormulaInCell()) {
-            std::unordered_set<Cell*> contained_refs = new_cell->GetCellsContainedInThis();
-            std::unordered_set<Cell*> cells_depending_on_cell = cell->GetCellsReferencingToThis();
+        cell->Set(text);  // возможны исключения CircularDependency или FormulaException
+        /* внутри Set обновились все связи: 
+        и для старых и для новых ссылок из|на cell */
+        
+        // Удаляем пустые ячейки, у которых не осталось связей после изменения cell
+        DeleteEmptyUnconnectedCells(old_referenced_cells);
 
-            if (contained_refs.count(cell)) {
-                throw CircularDependencyException("The cell contained itself");
-            }
-
-            if (!contained_refs.empty() && !cells_depending_on_cell.empty()) {
-                // проверяем на цикличность:
-                // Для каждой ячейки из списка ссылок (contained_refs[i]) 
-                // проверяем её наличие среди ячеек, которые ссылаются на исходную ячейку cell
-                for (const Cell* cell_tmp : contained_refs) {
-                    if (cell->CheckExistingDependenciesOnThisCell(cell_tmp)) {
-                        throw CircularDependencyException("Found circular dependency");
-                    } 
-                }
-            }     
-        }
-        /* сюда пришли если циклических зависимостей нет */
-        ClearCashOfDependentCells(cell);
-        // удаляем зависимость в каждой ячейке, на которую ранее ссылалась изменяемая ячейка
-        DeleteConnections(cell, cell->GetReferencedCells());
-
-        // цикличности нет => можно менять значение для cell
-        cell->Set(text);  // (может выпасти исключение FormulaException)
-        // сбрасываем кеш
-        cell->ClearCash();
-        /* внутри Set обновились связи у ячеек, на которые ссылается cell */
     }
 
     // обновляем кол-во элементов по строкам и столбцам
@@ -251,8 +227,9 @@ void Sheet::ClearCell(Position pos) {
         // удаляем ячейку и обновляем данные по печатаемой области
         DeleteCell(pos);
     } else {
-        // есть ссылки => надо обновить кеш, а ячейку сделать пустой
-        ClearCashOfDependentCells(cell_to_clear);
+        // есть зависимые ячейки => надо обновить из кеш, а ячейку сделать пустой
+        cell_to_clear->ClearCacheOfDependentCells();
+        
         cell_to_clear->ClearContent();
 
         // TODO: надо ли обновлять размер, если ячейка очищена, но не удалена окончательно из-за ссылок?
@@ -337,95 +314,24 @@ Cell* Sheet::GetConcreteCell(Position pos) {
 }
 
 
-// Очистить кэш у ячеек, зависящих от ячейки на заданной позиции pos
-// Необходимо вызвать после валидного изменения ячейки pos 
-void Sheet::ClearCashOfDependentCells(const Cell* cell_updated) {
-    std::unordered_set<Cell*> cells_dependent_on_updated_cell = cell_updated->GetCellsReferencingToThis(); 
-
-    // Случай 1 - зависимый ячеек нет
-    if (cells_dependent_on_updated_cell.empty()) {
+void Sheet::DeleteEmptyUnconnectedCells(const std::vector<Position>& cells_to_check) {
+    if (cells_to_check.empty()) {
         return;
-    }
-
-    // Случай 2 - зависимые есть - обход графа в ширину
-    std::queue<Cell*> cells_to_visit;
-    
-    // Добавляем ячейки в очередь просмотра
-    for (Cell* cell : cells_dependent_on_updated_cell) {
-        cells_to_visit.push(cell);
     }
     
-    while (!cells_to_visit.empty()) {
-        // берем первую (очередную) ячейку из очереди
-        Cell* cell_cur = cells_to_visit.front();
-
-        // Очищаем кэш только у ячеек, где он есть
-        if (cell_cur->HasCash()) {
-            // очищаем кеш
-            cell_cur->ClearCash();
-
-            // Добавляем в очередь ячейки, которые ссылаются на cell_cur
-            for (Cell* cell_tmp : cell_cur->GetCellsReferencingToThis()) {
-                cells_to_visit.push(cell_tmp);
-            }
-        }
-
-        // удаляем обработанную ячейку!!
-        cells_to_visit.pop();
-    }
-
-    return;
-}
-
-
-// Обновляет граф при изменении заданной ячейки pos
-void Sheet::AddConnections(Cell* cell_added, const std::vector<Position>& ref_list) {
-    // Случай 1 - ссылок нет
-    if (ref_list.empty()) {
-        return;
-    }
-
-    // Случай 2 - ссылки есть 
-    // => получаем/создаем ячейки на указанных позициях и добавляем им связи с cell_added
-    for (const Position& pos : ref_list) {
+    for (const Position& pos : cells_to_check) {
         Cell* cell_tmp = GetConcreteCell(pos);
-
-        // если ячейки нет, то создаем новую пустую ячейку
-        if (!cell_tmp) {
-            cell_tmp = AddNewEmptyCell(pos);
-        }
-
-        // для существующих ячеек добавляем связь
-        cell_tmp->AddNewCellReferencedToThis(cell_added);
-    }
-
-    return;
-} 
-
-
-void Sheet::DeleteConnections(Cell* cell_changed, const std::vector<Position>& ref_list) {
-     // Случай 1 - ссылок нет
-    if (ref_list.empty()) {
-        return;
-    }
-
-    // Случай 2 - ссылки есть 
-    // => получаем ячейки на указанных позициях и удаляем их связи с cell_changed
-    for (const Position& pos : ref_list) {
-        Cell* cell_tmp = GetConcreteCell(pos);
-        cell_tmp->DeleteReferenceToThis(cell_changed);
-
         // удаляем пустые ячейки без связей:
         if (cell_tmp->IsEmptyCell() && !cell_tmp->HasAnyCellsReferencedToThis()) {
             DeleteCell(pos);
         }
     }
-
+    return;
 }
 
 // создает пустую ячейку в месте pos и возвращает указатель на неё
 Cell* Sheet::AddNewEmptyCell(Position pos) {
-    SetCell(pos, ""s);
+    SetCell(pos, std::string());
     return GetConcreteCell(pos);
 }
 

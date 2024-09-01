@@ -81,9 +81,13 @@ public:
     // то надо вызвать CheckExistingDependenciesOnThisCell(Y) => true - есть зависимость => цикличность
     bool CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const;
 
-    bool HasCash() const;
+    bool HasCache() const;
 
-    void ClearCash();
+    void ClearCache();
+
+    // Очистить кэш у ячеек, зависящих от ячейки на заданной позиции pos
+    // Необходимо вызвать после валидного изменения ячейки pos 
+    void ClearCacheOfDependentCells();
 
 private:
 //можете воспользоваться нашей подсказкой, но это необязательно.
@@ -101,4 +105,14 @@ private:
     mutable std::optional<CellInterface::Value> cache_;  // храним результат расчета, чтобы не считать лишний раз 
 
     Sheet& sheet_;   // методы Cell могут менять содержимое таблицы
+
+    // Удаляет связи с данной ячейкой у тех ячеек, которые ранее в ней содержались (согласно списку cells_contained_in_this_)
+    // метод надо вызывать после изменения ячейки и до добавления новых связей add_connections 
+    void DeleteConnections();
+
+    // Обновляет граф при изменении заданной ячейки pos
+    void AddConnections();
+
+
+
 };

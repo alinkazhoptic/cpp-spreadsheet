@@ -42,13 +42,6 @@ public:
     const Cell* GetConcreteCell(Position pos) const;
     Cell* GetConcreteCell(Position pos);
 
-    // Добавляет ячейкам из ref_list связи с ячейкой cell_added
-    void AddConnections(Cell* cell_added, const std::vector<Position>& ref_list); 
-
-    // Удаляет связи ячеек из ref_list с ячейкой cell_changed
-    // метод надо вызывать до add_connections 
-    void DeleteConnections(Cell* cell_changed, const std::vector<Position>& ref_list);
-
     // создает пустую ячейку в месте pos и возвращает указатель на неё
     Cell* AddNewEmptyCell(Position pos);
 
@@ -63,14 +56,12 @@ private:
 
     bool IsPositionInsidePrintableZone(Position pos) const;
 
-    // Очистить кэш у ячеек, зависящих от ячейки на заданной позиции pos
-    // Необходимо вызвать после валидного изменения ячейки pos 
-    void ClearCashOfDependentCells(const Cell* cell_updated);
-
     void DeleteCell(Position pos);
 
     // Определяет новый размер печатаемой области после удаления ячейки из pos
     // Также обновляет данные по кол-ву ячеек в строках и столбцах
     void UpdatePrintableAreaAfterClearPosition(Position pos);
+
+    void DeleteEmptyUnconnectedCells(const std::vector<Position>& cells_to_check);
 
 };
