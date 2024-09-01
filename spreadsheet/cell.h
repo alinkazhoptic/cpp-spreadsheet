@@ -7,6 +7,12 @@
 #include <unordered_set>
 
 class Sheet; // возможно, заглушка. Но если добавлять #include "sheet.h",  то будут перекрестные ссылки - не скомпилируется
+/* 
+Можно было бы хранить в Cell ссылку на SheetInterface, но SheetInterface методом GetCell 
+может вернуть только объект класса CellInterface, а по текущему видению алгоритмов поиска 
+циклических зависимостей и инвалидации, нам потребуются специфичные методы для Cell, 
+которые отсутствуют в CellInterface (например, GetCellsReferencingToThis) 
+*/
 
 
 class Cell : public CellInterface {
@@ -89,13 +95,10 @@ private:
 
     std::unique_ptr<Impl> impl_;
 
-    // std::unordered_set<Position> cells_contained_in_this_;  // ячейки, на которые ссылается данная ячейка
-    // std::unordered_set<Position> cells_referencing_to_this_;  // ячейки, которые ссылаются на данную ячейку
-
     std::unordered_set<Cell*> cells_contained_in_this_;  // ячейки, на которые ссылается данная ячейка
     std::unordered_set<Cell*> cells_referencing_to_this_;  // ячейки, которые ссылаются на данную ячейку
 
-    mutable std::optional<CellInterface::Value> cash_;  // храним результат расчета, чтобы не считать лишний раз 
+    mutable std::optional<CellInterface::Value> cache_;  // храним результат расчета, чтобы не считать лишний раз 
 
     Sheet& sheet_;   // методы Cell могут менять содержимое таблицы
 };

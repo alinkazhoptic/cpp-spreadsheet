@@ -167,7 +167,7 @@ public:
     }
 
     void Clear() override {
-        delete formula_interf_.release();
+        formula_interf_.reset();
     } 
 
     Value GetValue(const SheetInterface& sheet) const override {
@@ -212,7 +212,7 @@ private:
 
 // Конструктор создает пустую ячейку 
 Cell::Cell(Sheet& sheet) 
-: impl_(std::move(std::make_unique<EmptyImpl>()))
+: impl_(std::make_unique<EmptyImpl>())
 , sheet_(sheet) {}
 
 
@@ -227,7 +227,6 @@ void Cell::Set(std::string text) {
     
     // Случай 1 - пустая строка => пустая ячейка
     if (text.empty()) {
-
         new_impl.reset(new EmptyImpl());
     }
     // Случай 2 - формула
@@ -243,8 +242,7 @@ void Cell::Set(std::string text) {
         new_impl->Set(text);
     }
 
-    // удаляем предыдущие данные 
-    delete impl_.release();
+    
     // очищаем информацию о содержащихся ссылках
     cells_contained_in_this_.clear();
 
@@ -262,12 +260,12 @@ void Cell::Set(std::string text) {
 
 // Cовсем удаляет содержимое ячейки, 
 void Cell::DeleteCell() {
-    delete impl_.release();
+    impl_.reset();
 }
 
 // Превращает ячейку в пустую
 void Cell::ClearContent() {
-    delete impl_.release();
+    impl_.reset();
     EmptyImpl* new_impl = new EmptyImpl();
     impl_.reset(new_impl);
 }
@@ -278,9 +276,9 @@ CellInterface::Value Cell::GetValue() const {
     // для формул вычисляем кеш при необходимости
     if (IsFormulaInCell()) {
         if (!HasCash()) {
-            cash_ = impl_->GetValue(sheet_);  // исключения тоже записываются в кеш
+            cache_ = impl_->GetValue(sheet_);  // исключения тоже записываются в кеш
         } 
-        res = cash_.value();
+        res = cache_.value();
     } else { // для текста берем просто GetValue()
         res = impl_->GetValue(sheet_);
     }
@@ -426,9 +424,9 @@ std::vector<Position> Cell::GetReferencedCells() const {
 
 
 bool Cell::HasCash() const {
-    return (cash_.has_value());
+    return (cache_.has_value());
 }
 
 void Cell::ClearCash() {
-    cash_.reset();
+    cache_.reset();
 }

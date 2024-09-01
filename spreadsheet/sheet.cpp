@@ -70,7 +70,7 @@ void Sheet::SetCell(Position pos, std::string text) {
     // Если данных нет, то просто записываем ячейку:
     if (cell == nullptr) {
         // создаем новую ячейку
-        cell = new Cell(*this);
+        auto cell = std::make_unique<Cell>(*this);
         cell->Set(text);
 
         std::vector contained_cells = cell->GetReferencedCells();
@@ -79,11 +79,16 @@ void Sheet::SetCell(Position pos, std::string text) {
             throw CircularDependencyException("Found circular dependency");
         }
         // помещаем указатель на созданную ячейку в таблицу
-        sheet_[pos.row][pos.col].reset(cell); 
+        sheet_[pos.row][pos.col] = std::move(cell); 
     }
     else { 
+        // Если текст ячейки не изменился - ничего делать не надо
+        if (cell->GetText() == text) {
+            return;
+        }
+
         // создаем новую ячейку, по которой проверим наличие циклических зависимостей
-        Cell* new_cell = new Cell(*this); 
+        auto new_cell = std::make_unique<Cell>(*this);
         new_cell->Set(text);
 
         // Для формульной ячейки надо проверить на циклические зависимости
