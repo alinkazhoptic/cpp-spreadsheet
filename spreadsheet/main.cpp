@@ -309,10 +309,14 @@ void TestPrint() {
 }
 
 void TestCellReferences() {
+    std::cout <<"TestCellReferences started" << std::endl;
     auto sheet = CreateSheet();
     sheet->SetCell("A1"_pos, "1");
+    std::cout << "\tA1 -> 1" << std::endl;
     sheet->SetCell("A2"_pos, "=A1");
+    std::cout << "\tA2 -> =A1" << std::endl;
     sheet->SetCell("B2"_pos, "=A1");
+    std::cout << "\tB2 -> =A1" << std::endl;
 
     ASSERT(sheet->GetCell("A1"_pos)->GetReferencedCells().empty());
     ASSERT_EQUAL(sheet->GetCell("A2"_pos)->GetReferencedCells(), std::vector{"A1"_pos});
@@ -320,15 +324,18 @@ void TestCellReferences() {
 
     // Ссылка на пустую ячейку
     sheet->SetCell("B2"_pos, "=B1");
+    std::cout << "\tB2 -> =B1" << std::endl;
     ASSERT(sheet->GetCell("B1"_pos)->GetReferencedCells().empty());
     ASSERT_EQUAL(sheet->GetCell("B2"_pos)->GetReferencedCells(), std::vector{"B1"_pos});
 
     sheet->SetCell("A2"_pos, "");
+    std::cout << "\tA2 -> empty" << std::endl;
     ASSERT(sheet->GetCell("A1"_pos)->GetReferencedCells().empty());
     ASSERT(sheet->GetCell("A2"_pos)->GetReferencedCells().empty());
 
     // Ссылка на ячейку за пределами таблицы
     sheet->SetCell("B1"_pos, "=C3");
+    std::cout << "\tB1 -> =C3" << std::endl;
     ASSERT_EQUAL(sheet->GetCell("B1"_pos)->GetReferencedCells(), std::vector{"C3"_pos});
 }
 
@@ -355,8 +362,11 @@ void TestCellCircularReferences() {
     bool caught = false;
     try{
         sheet->SetCell("A1"_pos, "=C1");
+        std::cout << "A1 --> =C1" << std::endl;
         sheet->SetCell("C1"_pos, "=1");
+        std::cout << "C1 --> =1" << std::endl;
         sheet->SetCell("A1"_pos, "=C1+A1");
+        std::cout << "A1 --> =C1+A1" << std::endl;
         // sheet->SetCell("A1"_pos, "=A1");
         // sheet->SetCell("A1"_pos, "=C1+A1");
     } catch(const CircularDependencyException&) {

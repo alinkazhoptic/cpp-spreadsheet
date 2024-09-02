@@ -75,11 +75,10 @@ public:
     bool IsEmptyCell() const;
 
 
-    // Проверяет, есть ли среди всех зависимостей от данной ячейки, 
-    // ячейка с координатами pos. Необходим для обнаружения циклических зависимостей.
-    // Если в данную ячейку пытаемся записать ячейку с позицией Y, 
-    // то надо вызвать CheckExistingDependenciesOnThisCell(Y) => true - есть зависимость => цикличность
-    bool CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const;
+    // Проверяет, есть ли у ячеек на позициях new_refs, связь с данной ячейкой (this)
+    // имеет вызвать до помещения новых данных в impl_, например, CheckExistingDependenciesOnThisCell(new_impl->GetReferencedCells()) 
+    // => true - есть зависимость => есть цикличность
+    bool CheckExistingDependenciesOnThisCell(std::vector<Position> new_refs) const;
 
     bool HasCache() const;
 
@@ -112,7 +111,5 @@ private:
 
     // Обновляет граф при изменении заданной ячейки pos
     void AddConnections();
-
-
 
 };

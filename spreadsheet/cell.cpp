@@ -233,15 +233,12 @@ void Cell::Set(std::string text) {
     // символ '=' и наличие содержательной части после '=' как признак формулы 
     else if (text.size() > 1 && text.at(0) == FORMULA_SIGN) {
         new_impl = std::make_unique<FormulaImpl>();
-        // записываем формулу без =
+        // записываем формулу без знака =
         new_impl->Set(text.substr(1, text.size() - 1));
-
+        
         // проверяем на циклические зависимости:
-        for (const Position& pos : new_impl->GetReferencedCells()) {
-            const Cell* cell_to_find = sheet_.GetConcreteCell(pos);
-            if (CheckExistingDependenciesOnThisCell(cell_to_find) || (cell_to_find == this)) {
-                throw CircularDependencyException("Found circular dependency");
-            }
+        if (CheckExistingDependenciesOnThisCell(new_impl->GetReferencedCells())) {
+            throw CircularDependencyException("Found circular dependency");
         }
     }
     // Случай 3 - текст (в том числе текст с формулой если он начинается на ')
@@ -277,7 +274,8 @@ void Cell::DeleteCell() {
 
 // Превращает ячейку в пустую
 void Cell::ClearContent() {
-    impl_.reset(new EmptyImpl());
+    // опустошаем ячейку
+    Set(std::string());
 }
 
 
@@ -376,18 +374,14 @@ bool Cell::IsEmptyCell() const {
 }
 
 
-
-
-/* Проверяет, есть ли среди всех зависимостей от данной ячейки, 
-ячейка с адресом cell_to_find. Необходим для обнаружения циклических зависимостей.
-Если в ДАННУЮ ячейку пытаемся записать ячейку cell_to_find, 
-то надо вызвать CheckExistingDependenciesOnThisCell(cell_to_find) => true - есть зависимость => цикличность
+/*
+Проверяет, есть ли у ячеек на позициях new_refs, связь с данной ячейкой (this)
+имеет вызвать до помещения новых данных в impl_, например, CheckExistingDependenciesOnThisCell(new_impl->GetReferencedCells()) 
+=> true - есть зависимость => есть цикличность
 */
-bool Cell::CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const {
-
-    bool is_found = false;
-    // Случай 0 - связей нет
-    if (cells_referencing_to_this_.empty()) {
+bool Cell::CheckExistingDependenciesOnThisCell(std::vector<Position> new_refs_pos) const {
+    // Случай 1 - данная ячейка ни от кого не зависит
+    if (new_refs_pos.empty()) {
         return false;     
     }
 
@@ -396,8 +390,18 @@ bool Cell::CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const {
     std::queue<Cell*> cells_to_visit;
     
     // Добавляем ячейки в очередь просмотра
-    for (Cell* cell : cells_referencing_to_this_) {
-        cells_to_visit.push(cell);
+    for (const Position& pos : new_refs_pos) {
+        Cell* cell_tmp = sheet_.GetConcreteCell(pos);
+
+        // Проверяем, что в данной ячейке нет ссылки на саму себя
+        if (cell_tmp == this) {
+            return true;
+        }
+
+        // добавляем только существующие ячейки
+        if (cell_tmp != nullptr) {
+            cells_to_visit.push(cell_tmp);
+        }
     }
     
     while (!cells_to_visit.empty()) {
@@ -407,13 +411,12 @@ bool Cell::CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const {
         if (!visited_cells.count(cell_cur)) {
             // пополняем список посещенных ячеек
             visited_cells.insert(cell_cur);
-            // проверяем
-            if (cell_cur == cell_to_find) {
-                is_found = true;
-                return is_found; 
+            // проверяем, что нет ссылки на саму себя
+            if (cell_cur == this) {
+                return true; 
             }
-            // Добавляем в очередь ячейки, которые ссылаются на cell_cur
-            for (Cell* cell_tmp : cell_cur->GetCellsReferencingToThis()) {
+            // Добавляем в очередь ячейки, на которые ссылается cell_cur
+            for (Cell* cell_tmp : cell_cur->GetCellsContainedInThis()) {
                 cells_to_visit.push(cell_tmp);
             }
         }
@@ -421,7 +424,7 @@ bool Cell::CheckExistingDependenciesOnThisCell(const Cell* cell_to_find) const {
         cells_to_visit.pop();
     }
     
-    return is_found;
+    return false;
 }
 
 

@@ -224,16 +224,11 @@ void Sheet::ClearCell(Position pos) {
     
     // Случай 1 - на ячейку никто не ссылался 
     if (cells_dependent_on_cleared.empty()) {
-        // удаляем ячейку и обновляем данные по печатаемой области
+        // совсем удаляем ячейку и обновляем печатаемую область
         DeleteCell(pos);
     } else {
-        // есть зависимые ячейки => надо обновить из кеш, а ячейку сделать пустой
-        cell_to_clear->ClearCacheOfDependentCells();
-        
+        // опустошаем ячейку и обновляем печатаемую область
         cell_to_clear->ClearContent();
-
-        // TODO: надо ли обновлять размер, если ячейка очищена, но не удалена окончательно из-за ссылок?
-        // Обновляем размер при необходимости
         UpdatePrintableAreaAfterClearPosition(pos);
     }
 
